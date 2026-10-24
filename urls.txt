@@ -1,0 +1,3 @@
+https://example.com/docs#install
+https://example.com/docs#configuration
+https://example.com/removed
