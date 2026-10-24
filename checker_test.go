@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -13,9 +14,15 @@ import (
 
 func TestReadURLs(t *testing.T) {
 	urls, err := readURLs(strings.NewReader(
-		"https://example.com/docs#one\n\nhttps://Example.COM/docs#two\nhttps://example.com/docs?v=2\n",
+		"https://example.com/docs#one\n\nhttps://Example.COM/docs#two\nhttps://example.com/docs?v=2\n" +
+			"https://example.com:443/docs\nhttp://example.com:80\nhttp://example.com/\nhttps://example.com:8443\n",
 	))
-	want := []string{"https://example.com/docs", "https://example.com/docs?v=2"}
+	want := []string{
+		"https://example.com/docs",
+		"https://example.com/docs?v=2",
+		"http://example.com/",
+		"https://example.com:8443/",
+	}
 	if err != nil || !reflect.DeepEqual(urls, want) {
 		t.Fatalf("urls=%v err=%v, want %v", urls, err, want)
 	}
@@ -82,6 +89,30 @@ func TestCheckURLTimeout(t *testing.T) {
 	result := checkURL(context.Background(), client, server.URL)
 	if result.Outcome != "review" || result.Error == "" {
 		t.Fatalf("expected an uncertain timeout result: %+v", result)
+	}
+}
+
+func TestCheckURLReusesConnections(t *testing.T) {
+	var opened atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("x", 32*1024)))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			opened.Add(1)
+		}
+	}
+	server.Start()
+	defer server.Close()
+	client := newClient(time.Second)
+	defer client.CloseIdleConnections()
+	for range 3 {
+		if result := checkURL(context.Background(), client, server.URL); result.Outcome != "ok" {
+			t.Fatalf("unexpected result: %+v", result)
+		}
+	}
+	if opened.Load() != 1 {
+		t.Fatalf("opened %d connections, want 1", opened.Load())
 	}
 }
 

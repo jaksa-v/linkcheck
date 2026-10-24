@@ -52,6 +52,13 @@ func readURLs(input io.Reader) ([]string, error) {
 		}
 
 		parsed.Host = strings.ToLower(parsed.Host)
+		if port := parsed.Port(); (parsed.Scheme == "http" && port == "80") ||
+			(parsed.Scheme == "https" && port == "443") {
+			parsed.Host = strings.TrimSuffix(parsed.Host, ":"+port)
+		}
+		if parsed.Path == "" {
+			parsed.Path = "/"
+		}
 		parsed.Fragment = ""
 		parsed.RawFragment = ""
 		normalised := parsed.String()
@@ -105,7 +112,12 @@ func checkURL(ctx context.Context, client *http.Client, target string) Result {
 		result.Error = err.Error()
 		return result
 	}
-	defer response.Body.Close()
+	defer func() {
+		// Drain a bounded amount so the connection can return to the pool;
+		// bodies larger than this are cut off and the connection is dropped.
+		io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+		response.Body.Close()
+	}()
 
 	result.Status = response.StatusCode
 	result.FinalURL = response.Request.URL.String()
